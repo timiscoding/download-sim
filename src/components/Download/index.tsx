@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useReducer, useRef } from "react";
+import { RNG, lerp, ValueNoise1D } from "../../noise";
 
 /*
   each download has own interval so it can be started and stopped independently from other downloads
@@ -14,6 +15,7 @@ interface State {
   ticks: number;
   downloaded: Bits;
   running: boolean;
+  stepBits: Bits;
 }
 
 type Bits = number;
@@ -28,6 +30,7 @@ const initState: State = {
   ticks: 0,
   downloaded: 0,
   running: false,
+  stepBits: 0,
 };
 
 type Action =
@@ -72,20 +75,43 @@ const useInterval = (callback: () => void, delay: number | null) => {
   }, [delay]);
 };
 
-const lerp = (t: number, speed: BitsPerTick) => {
-  return t <= 5000 ? (t / 5000) * speed : speed;
-};
+const rng = new RNG(18308);
+const seq = Array(10)
+  .fill(null)
+  .map((_) => Math.trunc(rng.rand() * 10));
+console.log("seq", seq);
 
 const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
   const [state, dispatch] = useReducer(reducer, initState);
 
   const [step, setStep] = useState<number>(100);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const tickDelay = 250;
   const speed = 100;
 
+  useEffect(() => {
+    if (canvasRef.current === null) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (ctx === null) return;
+
+    const valueNoise = new ValueNoise1D();
+    const numSteps = 10;
+    const noise = [];
+    for (let i = 0; i < numSteps; i++) {
+      const x = (i / (numSteps - 1)) * 10;
+      noise.push(valueNoise.at(x));
+    }
+    console.log("lerp", noise);
+    // ctx.fillRect(20, 20, 50, 20);
+  }, []);
+
   useInterval(
     () => {
-      dispatch(createTick(lerp(state.ticks * tickDelay, speed)));
+      const fiveSec = 5000 / tickDelay;
+      const step =
+        state.ticks < fiveSec ? lerp(state.ticks / fiveSec, 0, speed) : speed;
+      dispatch(createTick(step));
     },
     state.running && state.downloaded < size ? tickDelay : null
   );
@@ -97,6 +123,7 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
           ...state,
           ticks: state.ticks + 1,
           downloaded: Math.min(size, state.downloaded + action.stepBits),
+          stepBits: action.stepBits,
         };
       case "start_download":
         return {
@@ -109,6 +136,7 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
           running: false,
           downloaded: 0,
           ticks: 0,
+          stepBits: 0,
         };
       default:
         throw new Error("Unknown action");
@@ -120,6 +148,7 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
   };
 
   const donePercent = Math.round((state.downloaded / size) * 100);
+  const actualSpeed = (state.stepBits / tickDelay) * 1000;
 
   return (
     <div>
@@ -128,20 +157,19 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
         <div>
           {state.downloaded} / {size}
         </div>
+        <div>{actualSpeed} bits/s</div>
         <progress max={100} value={donePercent}>
           {donePercent}%
         </progress>
         <button onClick={toggleDownload}>
           {state.running ? "Stop" : "Start"}
         </button>
-        <input
-          type="range"
-          min={10}
-          max={100}
-          step={10}
-          value={step}
-          onChange={(e) => setStep(Number(e.target.value))}
-        />
+        <canvas
+          ref={canvasRef}
+          width="300"
+          height="200"
+          style={{ border: "1px solid blue" }}
+        ></canvas>
       </div>
     </div>
   );
