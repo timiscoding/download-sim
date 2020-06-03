@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useReducer, useRef } from "react";
-import { RNG, lerp, ValueNoise1D } from "../../noise";
+import { PerlinNoise1D, map, smoothstep, decel } from "../../noise";
 
 /*
   each download has own interval so it can be started and stopped independently from other downloads
@@ -58,6 +58,10 @@ const stopDownload = (): Action => ({
   type: "stop_download",
 });
 
+/*
+  Hook courtesy of Dan Abramov
+  https://overreacted.io/making-setinterval-declarative-with-react-hooks/
+*/
 const useInterval = (callback: () => void, delay: number | null) => {
   const callbackRef = useRef(() => {});
 
@@ -75,42 +79,55 @@ const useInterval = (callback: () => void, delay: number | null) => {
   }, [delay]);
 };
 
-const rng = new RNG(18308);
-const seq = Array(10)
-  .fill(null)
-  .map((_) => Math.trunc(rng.rand() * 10));
-console.log("seq", seq);
+const tickDelay = 250;
+const speed = 100;
 
 const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
   const [state, dispatch] = useReducer(reducer, initState);
 
-  const [step, setStep] = useState<number>(100);
+  const [perlinNoise] = useState(new PerlinNoise1D(smoothstep));
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const tickDelay = 250;
-  const speed = 100;
+  const bitStep = useRef<[[number, number], [number, number]]>([
+    [0, 0],
+    [0, 200],
+  ]);
 
   useEffect(() => {
     if (canvasRef.current === null) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     if (ctx === null) return;
-
-    const valueNoise = new ValueNoise1D();
-    const numSteps = 10;
-    const noise = [];
-    for (let i = 0; i < numSteps; i++) {
-      const x = (i / (numSteps - 1)) * 10;
-      noise.push(valueNoise.at(x));
+    if (state.ticks === 0) {
+      ctx.clearRect(0, 0, 300, 200);
+      bitStep.current = [
+        [0, 0],
+        [0, 200],
+      ];
     }
-    console.log("lerp", noise);
-    // ctx.fillRect(20, 20, 50, 20);
-  }, []);
+    if (!state.running) {
+      return;
+    }
+
+    ctx.beginPath();
+    bitStep.current[0] = bitStep.current[1];
+    bitStep.current[1] = [
+      map(state.downloaded, 0, size, 0, 300),
+      200 - map(state.stepBits, 0, 150, 0, 180),
+    ];
+    ctx.moveTo(...bitStep.current[0]);
+    ctx.lineTo(...bitStep.current[1]);
+    ctx.stroke();
+  }, [state.stepBits, state.ticks, state.running, size, state.downloaded]);
 
   useInterval(
     () => {
       const fiveSec = 5000 / tickDelay;
+      const noiseFactor = perlinNoise.at(state.ticks * 0.1);
+      const noise = Math.trunc(map(noiseFactor, -1, 1, -25, 25));
       const step =
-        state.ticks < fiveSec ? lerp(state.ticks / fiveSec, 0, speed) : speed;
+        state.ticks < fiveSec
+          ? decel(0, speed, state.ticks / fiveSec)
+          : speed + noise;
       dispatch(createTick(step));
     },
     state.running && state.downloaded < size ? tickDelay : null
@@ -148,14 +165,14 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
   };
 
   const donePercent = Math.round((state.downloaded / size) * 100);
-  const actualSpeed = (state.stepBits / tickDelay) * 1000;
+  const actualSpeed = ((state.stepBits / tickDelay) * 1000).toFixed(1);
 
   return (
     <div>
       Download
       <div>
         <div>
-          {state.downloaded} / {size}
+          {Math.trunc(state.downloaded)} / {size}
         </div>
         <div>{actualSpeed} bits/s</div>
         <progress max={100} value={donePercent}>
