@@ -1,6 +1,25 @@
-import React, { useEffect, useState, useReducer, useRef } from "react";
-import { PerlinNoise1D, map, smoothstep, decel } from "../../noise";
+import React, { useState, useReducer, useEffect, useRef } from "react";
 
+import { useInterval, useSpeedGraph } from "../../hooks";
+import {
+  PerlinNoise1D,
+  map,
+  smoothstep,
+  decel,
+  SpeedProfile,
+} from "../../noise";
+import {
+  Bits,
+  State,
+  Action,
+  createTick,
+  startDownload,
+  stopDownload,
+  setStartTime,
+} from "./state";
+import { SpeedGraph } from "../SpeedGraph";
+import { CanvasDraw } from "./scale";
+import { assertNever } from "../../utils";
 /*
   each download has own interval so it can be started and stopped independently from other downloads
   each download has its own size so you can compare download speeds with varying sizes
@@ -9,16 +28,21 @@ import { PerlinNoise1D, map, smoothstep, decel } from "../../noise";
   download speed should be gradual and climb to max download speed and fluctuate a little at top speed
   download can have multiple views like progress bar, speed and percent completed, speedo, wget, etc
 
+  implementation details
+  download sets up the normalised speed profile and passes a elapsed prop that signals the current progress.
+  Because the speed is based on a deterministic noise function, we can simply pass the function to
+  other subcomponents (ie. speedgraph, progress bars, etc) and let them compute the values they want,
+  when they want (ie. sampling).
+
+  This component will run a rAF timer that continually updates the time elapsed for the download once
+  the download is started. There is only 1 timer so that every subcomponent is in sync.
+  Each subcomponent will rerender and compute the current download speed based on the
+  speed function and elapsed time. Giving each component the data they need to compute the speed
+  at any time interval gives it lots of flexibility. Ie. the component that shows the current speed
+  might only want to update every 250ms, so it can choose to update every 250ms whereas the graph
+  will want to sample more regularly (eg. 60fps) to produce a smoother animation and curve
 */
 
-interface State {
-  ticks: number;
-  downloaded: Bits;
-  running: boolean;
-  stepBits: Bits;
-}
-
-type Bits = number;
 type BitsPerTick = number;
 
 interface IInterval {
@@ -27,56 +51,12 @@ interface IInterval {
 }
 
 const initState: State = {
+  startTime: null,
+  elapsed: 0,
   ticks: 0,
   downloaded: 0,
   running: false,
   stepBits: 0,
-};
-
-type Action =
-  | {
-      type: "tick";
-      stepBits: Bits;
-    }
-  | {
-      type: "start_download";
-    }
-  | {
-      type: "stop_download";
-    };
-
-const createTick = (stepBits: Bits): Action => ({
-  type: "tick",
-  stepBits,
-});
-
-const startDownload = (): Action => ({
-  type: "start_download",
-});
-
-const stopDownload = (): Action => ({
-  type: "stop_download",
-});
-
-/*
-  Hook courtesy of Dan Abramov
-  https://overreacted.io/making-setinterval-declarative-with-react-hooks/
-*/
-const useInterval = (callback: () => void, delay: number | null) => {
-  const callbackRef = useRef(() => {});
-
-  useEffect(() => {
-    callbackRef.current = callback;
-  });
-  useEffect(() => {
-    function tick() {
-      callbackRef.current();
-    }
-    if (delay !== null) {
-      const id = setInterval(tick, delay);
-      return () => clearInterval(id);
-    }
-  }, [delay]);
 };
 
 const tickDelay = 250;
@@ -84,63 +64,67 @@ const speed = 100;
 
 const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
   const [state, dispatch] = useReducer(reducer, initState);
-
   const [perlinNoise] = useState(new PerlinNoise1D(smoothstep));
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const bitStep = useRef<[[number, number], [number, number]]>([
-    [0, 0],
-    [0, 200],
-  ]);
+  const [speedProfile] = useState(new SpeedProfile(400, 10000));
+  const requestId = useRef<number>();
+  // const startTime = useRef<number>();
+  const rafCallback = useRef((time: number) => {});
+
+  function updateTime(time: number) {
+    /* a race condition can occur where pressing the stop button at the right moment causes
+       this callback to continue running even though state.running has flipped to false.
+       This can happen if the button is pressed before the latest request ID is updated so that when
+       the effect hook is called, the cleanup cancels an older rAF. Meanwhile, the new one continues
+       running. By checking the running state here, we stop this from happening.
+    */
+    if (!state.running || state.elapsed > speedProfile.totalTime) {
+      return dispatch(stopDownload());
+    }
+
+    if (state.startTime === null) {
+      dispatch(setStartTime(time));
+    }
+
+    dispatch(createTick(time));
+    requestId.current = requestAnimationFrame(rafCallback.current);
+  }
 
   useEffect(() => {
-    if (canvasRef.current === null) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    if (ctx === null) return;
-    if (state.ticks === 0) {
-      ctx.clearRect(0, 0, 300, 200);
-      bitStep.current = [
-        [0, 0],
-        [0, 200],
-      ];
-    }
-    if (!state.running) {
-      return;
-    }
+    rafCallback.current = updateTime;
+  });
 
-    ctx.beginPath();
-    bitStep.current[0] = bitStep.current[1];
-    bitStep.current[1] = [
-      map(state.downloaded, 0, size, 0, 300),
-      200 - map(state.stepBits, 0, 150, 0, 180),
-    ];
-    ctx.moveTo(...bitStep.current[0]);
-    ctx.lineTo(...bitStep.current[1]);
-    ctx.stroke();
-  }, [state.stepBits, state.ticks, state.running, size, state.downloaded]);
+  useEffect(() => {
+    function tick(time: number) {
+      rafCallback.current(time);
+    }
+    if (state.running) {
+      requestId.current = requestAnimationFrame(tick);
+    }
+    return () => {
+      if (requestId.current) cancelAnimationFrame(requestId.current);
+    };
+  }, [state.running]);
 
-  useInterval(
-    () => {
-      const fiveSec = 5000 / tickDelay;
-      const noiseFactor = perlinNoise.at(state.ticks * 0.1);
-      const noise = Math.trunc(map(noiseFactor, -1, 1, -25, 25));
-      const step =
-        state.ticks < fiveSec
-          ? decel(0, speed, state.ticks / fiveSec)
-          : speed + noise;
-      dispatch(createTick(step));
-    },
-    state.running && state.downloaded < size ? tickDelay : null
-  );
+  // useInterval(
+  //   () => {
+  //     const fiveSec = 5000 / tickDelay;
+  //     const noiseFactor = perlinNoise.at(state.ticks * 0.1);
+  //     const noise = Math.trunc(map(noiseFactor, -1, 1, -25, 25));
+  //     let step =
+  //       state.ticks < fiveSec
+  //         ? decel(0, speed, state.ticks / fiveSec)
+  //         : speed + noise;
+  //     dispatch(createTick(Math.min(step, size - state.downloaded)));
+  //   },
+  //   state.running && state.downloaded < size ? tickDelay : null
+  // );
 
   function reducer(state: State, action: Action): State {
     switch (action.type) {
       case "tick":
         return {
           ...state,
-          ticks: state.ticks + 1,
-          downloaded: Math.min(size, state.downloaded + action.stepBits),
-          stepBits: action.stepBits,
+          elapsed: action.time - state.startTime!,
         };
       case "start_download":
         return {
@@ -151,12 +135,19 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
         return {
           ...state,
           running: false,
+          elapsed: 0,
           downloaded: 0,
           ticks: 0,
           stepBits: 0,
+          startTime: null,
+        };
+      case "set_start_time":
+        return {
+          ...state,
+          startTime: action.startTime,
         };
       default:
-        throw new Error("Unknown action");
+        return assertNever(action);
     }
   }
 
@@ -166,7 +157,7 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
 
   const donePercent = Math.round((state.downloaded / size) * 100);
   const actualSpeed = ((state.stepBits / tickDelay) * 1000).toFixed(1);
-
+  // console.log(state.elapsed);
   return (
     <div>
       Download
@@ -181,12 +172,17 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
         <button onClick={toggleDownload}>
           {state.running ? "Stop" : "Start"}
         </button>
-        <canvas
-          ref={canvasRef}
-          width="300"
-          height="200"
-          style={{ border: "1px solid blue" }}
-        ></canvas>
+        {Math.trunc(state.elapsed)} {speedProfile.totalTime}
+        <div
+          style={{ width: 400, height: 200, resize: "both", overflow: "auto" }}
+        >
+          {/* <CanvasDraw /> */}
+          <SpeedGraph
+            key={String(state.running)}
+            elapsed={state.elapsed}
+            speedProfile={speedProfile}
+          />
+        </div>
       </div>
     </div>
   );

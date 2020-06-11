@@ -13,6 +13,7 @@
     "react": "^16.13.1",
     "react-dom": "^16.13.1",
     "react-scripts": "3.4.1",
+    "resize-observer-polyfill": "1.5.1",
     "styled-components": "5.1.1",
     "typescript": "3.7.5"
   },
@@ -45,5 +46,6 @@
     "postcss-cli": "7.1.1",
     "tailwind.macro": "1.0.0-alpha.10",
     "tailwindcss": "1.4.6"
-  }
+  },
+  "prettier": {}
 }
