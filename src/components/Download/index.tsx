@@ -1,15 +1,7 @@
 import React, { useState, useReducer, useEffect, useRef } from "react";
 
-import { useInterval, useSpeedGraph } from "../../hooks";
+import { SpeedProfile } from "../../noise";
 import {
-  PerlinNoise1D,
-  map,
-  smoothstep,
-  decel,
-  SpeedProfile,
-} from "../../noise";
-import {
-  Bits,
   State,
   Action,
   createTick,
@@ -18,8 +10,8 @@ import {
   setStartTime,
 } from "./state";
 import { SpeedGraph } from "../SpeedGraph";
-import { CanvasDraw } from "./scale";
 import { assertNever } from "../../utils";
+import { Grid } from "../SpeedGraph/Grid";
 /*
   each download has own interval so it can be started and stopped independently from other downloads
   each download has its own size so you can compare download speeds with varying sizes
@@ -43,13 +35,6 @@ import { assertNever } from "../../utils";
   will want to sample more regularly (eg. 60fps) to produce a smoother animation and curve
 */
 
-type BitsPerTick = number;
-
-interface IInterval {
-  size: Bits;
-  speed: BitsPerTick;
-}
-
 const initState: State = {
   startTime: null,
   elapsed: 0,
@@ -60,14 +45,11 @@ const initState: State = {
 };
 
 const tickDelay = 250;
-const speed = 100;
 
 const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
   const [state, dispatch] = useReducer(reducer, initState);
-  const [perlinNoise] = useState(new PerlinNoise1D(smoothstep));
   const [speedProfile] = useState(new SpeedProfile(400, 10000));
   const requestId = useRef<number>();
-  // const startTime = useRef<number>();
   const rafCallback = useRef((time: number) => {});
 
   function updateTime(time: number) {
@@ -105,20 +87,6 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
     };
   }, [state.running]);
 
-  // useInterval(
-  //   () => {
-  //     const fiveSec = 5000 / tickDelay;
-  //     const noiseFactor = perlinNoise.at(state.ticks * 0.1);
-  //     const noise = Math.trunc(map(noiseFactor, -1, 1, -25, 25));
-  //     let step =
-  //       state.ticks < fiveSec
-  //         ? decel(0, speed, state.ticks / fiveSec)
-  //         : speed + noise;
-  //     dispatch(createTick(Math.min(step, size - state.downloaded)));
-  //   },
-  //   state.running && state.downloaded < size ? tickDelay : null
-  // );
-
   function reducer(state: State, action: Action): State {
     switch (action.type) {
       case "tick":
@@ -135,7 +103,7 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
         return {
           ...state,
           running: false,
-          elapsed: 0,
+          // elapsed: 0,
           downloaded: 0,
           ticks: 0,
           stepBits: 0,
@@ -157,7 +125,6 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
 
   const donePercent = Math.round((state.downloaded / size) * 100);
   const actualSpeed = ((state.stepBits / tickDelay) * 1000).toFixed(1);
-  // console.log(state.elapsed);
   return (
     <div>
       Download
@@ -174,11 +141,17 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
         </button>
         {Math.trunc(state.elapsed)} {speedProfile.totalTime}
         <div
-          style={{ width: 400, height: 200, resize: "both", overflow: "auto" }}
+          style={{
+            width: 400,
+            height: 200,
+            resize: "both",
+            overflow: "auto",
+            position: "relative",
+          }}
         >
-          {/* <CanvasDraw /> */}
+          <Grid />
           <SpeedGraph
-            key={String(state.running)}
+            // key={String(state.running)}
             elapsed={state.elapsed}
             speedProfile={speedProfile}
           />

@@ -1,135 +1,113 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useEffect } from "react";
 import ResizeObserver from "resize-observer-polyfill";
 
-import { Position } from "../../types";
-import { map, SpeedProfile } from "../../noise";
+import { SpeedProfile } from "../../noise";
 
-const scaleWidth = 400;
-const scaleHeight = 200;
+const FRAME_TIME = (1 / 60) * 1000; // time for 1 frame at 60fps
 
-function draw(
+/*
+  just realised it's easier to just draw the entire graph in svg then use css/ svg animation to
+  reveal the graph bit by bit to make it seem like the download is happening in real-time.
+  * less cpu intensive, entire svg renders once before the timer even starts.
+  * could use css translate transform so no reflow or repaint
+  * resizing handled by svg
+
+  drawing on canvas has downsides:
+  * lines look jagged
+  * need to redraw the graph manually when resized
+  * this is way more complicated than it needs to be...
+*/
+const draw = (
   canvas: HTMLCanvasElement,
   speedProfile: SpeedProfile,
-  prevElapsed: number,
-  elapsed: number,
-  scaleX: number = 1,
-  scaleY: number = 1
-) {
+  prevPos: [number, number],
+  elapsed: number
+) => {
   const ctx = canvas.getContext("2d");
   if (ctx === null) return;
-  // ctx.scale(scaleX, scaleY);
-  // ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.beginPath();
-  // ctx.moveTo(0, canvas.clientHeight);
-  // speedData.forEach(([x, speed]) => {
-  //   ctx.lineTo(
-  //     x * canvas.clientWidth,
-  //     canvas.clientHeight - speed * canvas.clientHeight * 0.8
-  //   );
-  // });
-  const prevX = (prevElapsed / speedProfile.totalTime) * canvas.width;
-  const prevY =
-    canvas.height - speedProfile.normalValue(prevElapsed) * canvas.height * 0.8;
-  ctx.moveTo(prevX, prevY);
-  // console.log(elapsed, canvas.clientWidth);
-  const x = (elapsed / speedProfile.totalTime) * canvas.width;
-  const y = canvas.height - speedProfile.normalValue(elapsed) * 0.8;
+  ctx.moveTo(prevPos[0], prevPos[1]);
+  const x = Math.floor((elapsed / speedProfile.totalTime) * canvas.width);
+  const y = Math.floor(speedProfile.normalValue(elapsed) * canvas.height);
   ctx.lineTo(x, y);
   ctx.stroke();
-  // ctx.setTransform(1, 0, 0, 1, 0, 0);
-}
+  prevPos[0] = x;
+  prevPos[1] = y;
+};
 
 const SpeedGraph: React.FC<{
   elapsed: number;
   speedProfile: SpeedProfile;
 }> = ({ elapsed, speedProfile }) => {
-  const [scale, setScale] = useState<{ x: number; y: number }>({ x: 1, y: 1 });
-  const graph = useRef<HTMLCanvasElement>(null);
-  const prevElapsed = useRef<number>(0);
+  const graph = useRef<HTMLCanvasElement>(document.createElement("canvas"));
+  const prevPos = useRef<[number, number]>([0, 0]);
+  const resizeCallback = useRef<ResizeObserverCallback>(() => {});
 
-  // setPos([pos[1], [x, y]]);
-
-  // const clearGraph = () => {
-  // setClear(true);
-  // setPos([
-  //   [0, height],
-  //   [0, height],
-  // ]);
-  // };
-  // console.log(downloaded);
-  // useEffect(() => {
-  //   if (graph.current === null) return;
-  //   const canvas = graph.current;
-  //   const ctx = canvas.getContext("2d");
-  //   if (ctx === null) return;
-  //   // if (downloaded === 0) {
-  //   //   ctx.clearRect(0, 0, width, height);
-  //   // }
-  //   // if (!state.running) {
-  //   //   return;
-  //   // }
-  //   const x = map(downloaded, 0, fileSize, 0, canvas.width);
-  //   const y = canvas.height - map(curSpeed, 0, maxSpeed, 0, canvas.height);
-
-  //   pos.current = [pos.current[1], [x, y]];
-  //   ctx.beginPath();
-  //   ctx.moveTo(...pos.current[0]);
-  //   ctx.lineTo(...pos.current[1]);
-  //   ctx.stroke();
-  // });
-
-  // useEffect(() => {
-  //   if (graph.current === null) return;
-
-  //   const resizeObserver = new ResizeObserver((entries) => {
-  //     if (entries.length === 0) return;
-  //     const { width, height } = entries[0].contentRect;
-  //     // const canvas = graph.current;
-  //     // if (canvas === null) return;
-  //     // const ctx = canvas.getContext("2d");
-  //     // if (ctx === null) return;
-
-  //     // const oldData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  //     // canvas.height = height;
-  //     // canvas.width = width;
-  //     // console.log("ch", canvas.height, canvas.width);
-  //     // ctx.scale(width / canvas.width, height / canvas.height);
-  //     // ctx.putImageData(oldData, 0, 0);
-  //     // ctx.scale(1, 1);
-  //     setScale({ x: canvas.clientWidth / scaleWidth, y: height / scaleHeight });
-  //   });
-
-  //   resizeObserver.observe(graph.current);
-  //   const canvas = graph.current;
-  //   canvas.height = graph.current.offsetHeight;
-  //   canvas.width = graph.current.offsetWidth;
-  //   return () => resizeObserver.unobserve(graph.current!);
-  // }, []);
-
-  // useEffect(() => {
-  //   if (graph.current === null) return;
-  //   // console.log("scale", scale);
-  //   speedData.current.push([downloaded, curSpeed]);
-  //   draw(graph.current, scale.x, scale.y, speedData.current);
-  // }, [scale, curSpeed, downloaded]);
+  // updates canvas rendering context
+  const updateCanvasConfig = () => {
+    const canvas = graph.current;
+    const scale = window.devicePixelRatio;
+    canvas.width = canvas.clientWidth * scale;
+    canvas.height = canvas.clientHeight * scale;
+    const ctx = canvas.getContext("2d");
+    if (ctx === null) return;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3;
+    /* change canvas to use traditional cartesian coord system
+       scale y to below 1 so that the y values don't get clipped when the noise pushes it above 1
+    */
+    ctx.translate(0, canvas.height);
+    ctx.scale(1, -0.8);
+  };
 
   useEffect(() => {
-    if (graph.current === null) return;
+    resizeCallback.current = (entries) => {
+      if (entries?.length === 0) return;
+      const canvas = graph.current;
+
+      updateCanvasConfig();
+      // resizing the canvas causes the canvas to clear so we have to redraw up to current elapsed value
+      const prevPos: [number, number] = [0, canvas.height];
+      for (let t = 0; t < elapsed; t += FRAME_TIME) {
+        draw(canvas, speedProfile, prevPos, t);
+      }
+    };
+  });
+
+  useEffect(() => {
     const canvas = graph.current;
-    canvas.width = canvas.clientWidth;
-    canvas.height = canvas.clientHeight;
+    /* the ref needs to be wrapped in this case, otherwise you can't get up-to-date props in the callback.
+       If the ref was passed directly into the constructor like `new ResizeObserver(ref)` then
+       what would happen is that every time a resize occurred, it would call the ref with the render
+       scope at the time this object was constructed. ie. the props would never update
+    */
+    const resize = (
+      entries: ResizeObserverEntry[],
+      observer: ResizeObserver
+    ) => {
+      resizeCallback.current(entries, observer);
+    };
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(canvas);
+    updateCanvasConfig();
+    prevPos.current = [0, canvas.height];
+    return () => resizeObserver.unobserve(canvas);
   }, []);
 
   useEffect(() => {
-    if (graph.current === null) return;
-    draw(graph.current, speedProfile, prevElapsed.current, elapsed);
-    prevElapsed.current = elapsed;
+    draw(graph.current, speedProfile, prevPos.current, elapsed);
   }, [elapsed, speedProfile]);
 
   return (
     <canvas
       ref={graph}
-      style={{ border: "1px solid blue", width: "100%", height: "100%" }}
+      style={{
+        border: "1px solid blue",
+        width: "100%",
+        height: "100%",
+        position: "absolute",
+      }}
     ></canvas>
   );
 };

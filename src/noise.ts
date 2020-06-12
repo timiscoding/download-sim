@@ -123,8 +123,8 @@ export class SpeedProfile {
   private noise: PerlinNoise1D;
   private static readonly FIVE_SEC = 5000;
   /* make the speed fluctuate by this factor. Perlin noise seems to oscillate between [-.3, .3]
-     By scaling it by 0.3, we can add roughly +/-10% noise to the speed */
-  private static readonly NOISE_TOLERANCE_FACTOR = 0.3;
+     By scaling it by 0.16, we can add roughly +/-5% noise to the speed */
+  private static readonly NOISE_TOLERANCE_FACTOR = 0.16;
 
   constructor(private _speed: number, private _fileSize: number) {
     this._totalTime = (_fileSize / _speed) * 1000;
@@ -163,8 +163,8 @@ export class SpeedProfile {
     }
 
     // Perlin noise values vary slowly and smoothly at low increasing step values ~0.1 so for
-    // simplicity, lets use the running time and scale it so that 1% equates to a 0.1 step
-    const t = (time / this._totalTime) * 10;
+    // simplicity, lets use the running time and scale it so that 1% equates to a 0.05 step
+    const t = (time / this._totalTime) * 5;
     return 1 + SpeedProfile.NOISE_TOLERANCE_FACTOR * this.noise.at(t);
   }
 
