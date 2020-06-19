@@ -1,1 +1,2 @@
-export { useInterval } from "./useInterval";
+export * from "./useInterval";
+export * from "./useResize";

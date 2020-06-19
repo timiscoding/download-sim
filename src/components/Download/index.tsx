@@ -1,6 +1,6 @@
 import React, { useState, useReducer, useEffect, useRef } from "react";
 
-import { SpeedProfile } from "../../noise";
+import { SpeedProfile, PerlinNoise1D } from "../../noise";
 import {
   State,
   Action,
@@ -11,7 +11,10 @@ import {
 } from "./state";
 import { SpeedGraph } from "../SpeedGraph";
 import { assertNever } from "../../utils";
-import { Grid } from "../SpeedGraph/Grid";
+import * as d3 from "d3";
+import SpeedTicker from "../SpeedGraph/SpeedTicker";
+import Axis from "../SpeedGraph/Axis";
+
 /*
   each download has own interval so it can be started and stopped independently from other downloads
   each download has its own size so you can compare download speeds with varying sizes
@@ -45,10 +48,16 @@ const initState: State = {
 };
 
 const tickDelay = 250;
+const p = new PerlinNoise1D();
+const n = Array(1000000)
+  .fill(null)
+  .map((_, i) => p.at(i * 0.05));
+const e = d3.extent(n);
+console.log("noise", e);
 
 const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
   const [state, dispatch] = useReducer(reducer, initState);
-  const [speedProfile] = useState(new SpeedProfile(400, 10000));
+  const [speedProfile] = useState(new SpeedProfile(1000000000, 100000000000));
   const requestId = useRef<number>();
   const rafCallback = useRef((time: number) => {});
 
@@ -140,6 +149,7 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
           {state.running ? "Stop" : "Start"}
         </button>
         {Math.trunc(state.elapsed)} {speedProfile.totalTime}
+        <SpeedTicker />
         <div
           style={{
             width: 400,
@@ -149,12 +159,12 @@ const Download: React.FC<{ size?: number }> = ({ size = 10000 }) => {
             position: "relative",
           }}
         >
-          <Grid />
           <SpeedGraph
             // key={String(state.running)}
             elapsed={state.elapsed}
             speedProfile={speedProfile}
           />
+          <Axis speedProfile={speedProfile} />
         </div>
       </div>
     </div>

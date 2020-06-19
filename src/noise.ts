@@ -67,7 +67,7 @@ export class PerlinNoise1D {
   private static readonly maxVertices = 256;
   private static readonly maxVerticesMask = PerlinNoise1D.maxVertices - 1;
 
-  constructor(private interpolate: Interpolate) {
+  constructor(private interpolate: Interpolate = smoothstep) {
     const seed = Math.floor(Math.random() * RNG.M);
     const rng = new RNG(seed);
     // generate random gradients between [-1, 1]
@@ -122,9 +122,9 @@ export class SpeedProfile {
   private _totalTime: number; // time to complete in ms
   private noise: PerlinNoise1D;
   private static readonly FIVE_SEC = 5000;
-  /* make the speed fluctuate by this factor. Perlin noise seems to oscillate between [-.3, .3]
-     By scaling it by 0.16, we can add roughly +/-5% noise to the speed */
-  private static readonly NOISE_TOLERANCE_FACTOR = 0.16;
+  /* make the speed fluctuate by this factor. Perlin noise oscillates between (-0.5, 0.5)
+     By scaling it by 0.1, we can add roughly +/-5% noise to the speed */
+  private static readonly NOISE_TOLERANCE_FACTOR = 0.1;
 
   constructor(private _speed: number, private _fileSize: number) {
     this._totalTime = (_fileSize / _speed) * 1000;
